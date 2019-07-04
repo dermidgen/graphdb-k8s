@@ -1,0 +1,121 @@
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: graphdb-ingress
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+spec:
+  backend:
+    serviceName: graphdb-service
+    servicePort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: graphdb-service
+  labels:
+    name: graphdb
+spec:
+  type: NodePort
+  ports:
+    - port: 80
+      name: graphdb-http
+      targetPort: 7200
+      protocol: TCP
+  selector:
+    name: graphdb
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: graphdb-headless
+  labels:
+    name: graphdb
+spec:
+  clusterIP: None
+  ports:
+    - port: 80
+      name: graphdb-http
+      targetPort: 7200
+      protocol: TCP
+  selector:
+    name: graphdb
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: graphdb
+spec:
+  replicas: 4
+  serviceName: graphdb-headless
+  selector:
+    matchLabels:
+      name: graphdb
+  template:
+    metadata:
+      labels:
+        name: graphdb
+    spec:
+      # nodeSelector:
+      #   workload: heavy
+      volumes:
+      - name: graphdb-data
+        persistentVolumeClaim:
+          claimName: graphdb-data
+      subdomain: graphdb-headless
+      containers:
+        - name: graphdb
+          imagePullPolicy: Always
+          image: ontotext/graphdb:8.10.1-ee
+          livenessProbe:
+            httpGet:
+              port: 7200
+            initialDelaySeconds: 60
+            timeoutSeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              port: 7200
+            initialDelaySeconds: 30
+            timeoutSeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              # cpu: 6
+              # memory: 40G
+              cpu: 2
+              memory: 3G
+            limits:
+              # cpu: 6
+              # memory: 45G
+              cpu: 6
+              memory: 3G
+          env:
+            - name: GDB_HEAP_SIZE
+              value: 3g
+            - name: GDB_JAVA_OPTS
+              value: "-Dgraphdb.workbench.cors.enable=true"
+          ports:
+            - containerPort: 7200
+          volumeMounts:
+            - name: graphdb-data
+              mountPath: /tmp/data
+  volumeClaimTemplates:
+  - metadata:
+      name: graphdb-data
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 30Gi
+      storageClassName: fast
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast
+provisioner: kubernetes.io/gce-pd
+parameters:
+  type: pd-ssd
+  replication-type: none
